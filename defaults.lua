@@ -9,6 +9,11 @@ defaults.TextSpeed = 10
 defaults.Theme = 'default'
 defaults.Scale = 1.0
 defaults.ShowPortraits = true
+defaults.SystemMessages = true
+-- Add message modes here if your server uses another mode for NPC dialogue.
+-- Mode 142 is intentionally excluded by default because it commonly contains
+-- fishing results and item-acquisition messages.
+defaults.AdditionalChatModes = {}
 
 local windower_settings = windower.get_windower_settings()
 defaults.Position = {}

@@ -30,7 +30,7 @@
 --
 _addon.author = 'Originally by Hando, English support added by Yuki & Kenshi, themes added by Ghosty'
 _addon.name = 'Balloon'
-_addon.version = '0.14'
+_addon.version = '0.15'
 _addon.commands = {'balloon','bl'}
 
 require('luau')
@@ -45,6 +45,7 @@ local settings = {}
 
 local theme = require('theme')
 local theme_options = {}
+local bundled_themes = {'default', 'dark-fade', 'ffxi', 'ffxi-window5', 'ffxi-window5-solid', 'ffvii-r', 'snes-ff'}
 
 local ui = require('ui')
 
@@ -57,6 +58,7 @@ MODE.TIMED_BATTLE = 142
 MODE.CUTSCENE_EMOTE = 15
 
 local ENTER_KEY = 28
+local NUMPAD_ENTER_KEY = 156
 local SCROLL_LOCK_KEY = 70
 
 local ZONE_OUT_PACKET = 0x0B
@@ -226,8 +228,14 @@ windower.register_event('incoming text',function(original,modified,mode,modified
 	-- print debug info
 	if S{'codes', 'mode', 'all'}[balloon.debug] then print("Mode: " .. mode .. " Text: " .. original) end
 
-	-- skip text modes that aren't NPC speech
-    if not S{MODE.MESSAGE, MODE.SYSTEM, MODE.TIMED_BATTLE, MODE.TIMED_MESSAGE}[mode] then return end
+	-- Skip text modes that are not NPC speech. Additional modes are opt-in because
+	-- some servers use timed-battle mode for unrelated fishing/item messages.
+	local accepted_modes = S{MODE.MESSAGE, MODE.SYSTEM, MODE.TIMED_MESSAGE}
+	for _, additional_mode in ipairs(settings.AdditionalChatModes or {}) do
+		accepted_modes[additional_mode] = true
+	end
+	if not accepted_modes[mode] then return end
+	if mode == MODE.SYSTEM and not settings.SystemMessages then return end
 
 	-- blank prompt line that auto-continues itself,
 	-- usually used to clear a space for a scene change?
@@ -450,6 +458,7 @@ windower.register_event("addon command", function(command, ...)
 		t[#t+1] = "     //Balloon 2  	: show balloon and show log"
 		t[#t+1] = "     //Balloon reset : reset balloon position"
 		t[#t+1] = "     //Balloon theme <theme> - loads the specified theme"
+		t[#t+1] = "     //Balloon theme list - lists available bundled themes"
 		t[#t+1] = "     //Balloon scale <scale> - scales the size of the balloon by a decimal (eg: 1.5)"
 		t[#t+1] = "     //Balloon delay <seconds> - delay before closing promptless balloons"
 		t[#t+1] = "     //Balloon text_speed <chars> - speed that text is displayed, in characters per frame"
@@ -483,6 +492,13 @@ windower.register_event("addon command", function(command, ...)
 
 	elseif command == 'theme' then
 		if not args:empty() then
+			if args[1] == 'list' then
+				log('available themes:')
+				for _, theme_name in ipairs(bundled_themes) do
+					log(('  %s%s'):format(theme_name, theme_name == settings.Theme and ' (current)' or ''))
+				end
+				return
+			end
 			if not args[1]:match('^[%w_-]+$') then
 				log('theme names may contain only letters, numbers, underscores, and hyphens')
 				return
@@ -554,6 +570,10 @@ windower.register_event("addon command", function(command, ...)
 		apply_theme()
 		log("portrait display - " .. (settings.ShowPortraits and "on" or "off"))
 
+	elseif command == 'system' or command == 'system_messages' then
+		settings.SystemMessages = not settings.SystemMessages
+		log("system message display - " .. (settings.SystemMessages and "on" or "off"))
+
 	elseif command == 'move_closes' then
 		settings.MovementCloses = not settings.MovementCloses
 		if settings.MovementCloses then
@@ -608,8 +628,8 @@ end)
 
 windower.register_event('keyboard',function(key_id,pressed,flags,blocked)
 	if windower.ffxi.get_info().chat_open or blocked then return end
-	if balloon.on == true then
-		if key_id == ENTER_KEY and pressed and not balloon.keydown then
+		if balloon.on == true then
+			if S{ENTER_KEY, NUMPAD_ENTER_KEY}[key_id] and pressed and not balloon.keydown then
 			balloon.keydown = true
 			close()
 		end
@@ -622,7 +642,7 @@ windower.register_event('keyboard',function(key_id,pressed,flags,blocked)
 			end
 		end
 	end
-	if S{ENTER_KEY, SCROLL_LOCK_KEY}[key_id] and not pressed then balloon.keydown = false end
+		if S{ENTER_KEY, NUMPAD_ENTER_KEY, SCROLL_LOCK_KEY}[key_id] and not pressed then balloon.keydown = false end
 end)
 
 windower.register_event("mouse",function(type,x,y,delta,blocked)

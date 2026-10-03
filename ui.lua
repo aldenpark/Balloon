@@ -44,6 +44,8 @@ local function setup_text(text, text_options)
     text:bg_visible(false)
     text:font(text_options.font, 'meiryo', 'segoe ui', 'sans-serif')
     text:size(text_options.font_size)
+    if text_options.bold ~= nil then text:bold(text_options.bold) end
+    if text_options.italic ~= nil then text:italic(text_options.italic) end
     text:alpha(text_options.font_color.alpha)
     text:color(text_options.font_color.red, text_options.font_color.green, text_options.font_color.blue)
     text:stroke_transparency(text_options.stroke.alpha or 0)

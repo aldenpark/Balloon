@@ -19,6 +19,8 @@ theme.apply = function(theme_settings)
     local message_languages = {English=theme_settings.message.fontenglish, Japanese=theme_settings.message.fontjapanese}
     options.message.font = message_languages[windower.ffxi.get_info().language]
     options.message.font_size = theme_settings.message.size
+    options.message.bold = theme_settings.message.bold
+    options.message.italic = theme_settings.message.italic
     options.message.font_color = {}
     options.message.font_color.alpha = theme_settings.message.dialogue.color.alpha
     options.message.font_color.red = theme_settings.message.dialogue.color.red
@@ -84,6 +86,8 @@ theme.apply = function(theme_settings)
     local name_languages = {English=theme_settings.npcname.fontenglish, Japanese=theme_settings.npcname.fontjapanese}
     options.name.font = name_languages[windower.ffxi.get_info().language]
     options.name.font_size = theme_settings.npcname.size
+    options.name.bold = theme_settings.npcname.bold
+    options.name.italic = theme_settings.npcname.italic
     options.name.font_color = {}
     options.name.font_color.alpha = theme_settings.npcname.color.alpha
     options.name.font_color.red = theme_settings.npcname.color.red
@@ -125,6 +129,8 @@ theme.apply = function(theme_settings)
                                  Japanese=theme_settings.timer.fontjapanese or theme_settings.message.fontjapanese}
         options.timer.font = timer_languages[windower.ffxi.get_info().language]
         options.timer.font_size = theme_settings.timer.size or theme_settings.message.size
+        options.timer.bold = theme_settings.timer.bold
+        options.timer.italic = theme_settings.timer.italic
 
         options.timer.font_color = {}
         if theme_settings.timer.color then
@@ -151,6 +157,8 @@ theme.apply = function(theme_settings)
         options.timer.offset_y = theme_settings.prompt.offsety
         options.timer.font = options.message.font
         options.timer.font_size = options.message.font_size
+        options.timer.bold = options.message.bold
+        options.timer.italic = options.message.italic
         options.timer.font_color = options.message.font_color
         options.timer.stroke = options.message.stroke
     end

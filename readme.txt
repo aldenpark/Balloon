@@ -44,11 +44,16 @@ Commands (Balloon or Bl):
   //bl 2                 Show balloons and show the log.
   //bl reset             Reset the balloon position.
   //bl theme <name>      Load a theme from themes/<name>/.
+  //bl theme list        List the bundled themes and current theme.
   //bl scale <number>    Scale the balloon, for example 1.5.
   //bl delay <seconds>   Set the promptless close delay; decimals are allowed.
   //bl text_speed <n>    Set animated text speed in whole characters per frame.
   //bl animate           Toggle the animated advancement prompt.
   //bl portrait          Toggle character portraits.
+  //bl system            Toggle system-message balloons.
+  Edit `settings.xml` and add message-mode numbers to `AdditionalChatModes`
+  if your server uses another chat mode for NPC dialogue. Mode 142 is excluded
+  by default because it commonly contains fishing and item-acquisition messages.
   //bl move_closes       Toggle closing balloons when the player moves.
   //bl debug <mode>      Enable debug output (off, all, mode, codes, chunk,
                         process, or chars).
@@ -63,6 +68,10 @@ for a button press. Themes select the appropriate English or Japanese font.
 
 Themes are stored under themes/. Portraits are stored under portraits/.
 Character-specific balloon backgrounds go under themes/<name>/characters/.
+The bundled `dark-fade` theme uses a near-black panel with softly faded edges;
+load it with `//bl theme dark-fade`.
+The bundled `ffxi-window5` and `ffxi-window5-solid` themes reproduce the newer
+FFXI Window 5 dialogue styles. The `-solid` variant uses an opaque background.
 
 See docs/Portrait-Creation.md for portrait guidance. Feedback is welcome via
 the GitHub issue tracker:
