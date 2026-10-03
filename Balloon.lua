@@ -1,6 +1,7 @@
 -- Copyright 2018, Hando
 -- Copyright 2021, Yuki
 -- Copyright 2022, Ghosty
+-- Copyright 2026, Alden Park
 -- All rights reserved.
 
 -- Redistribution and use in source and binary forms, with or without
@@ -29,7 +30,7 @@
 --
 _addon.author = 'Originally by Hando, English support added by Yuki & Kenshi, themes added by Ghosty'
 _addon.name = 'Balloon'
-_addon.version = '0.13'
+_addon.version = '0.14'
 _addon.commands = {'balloon','bl'}
 
 require('luau')
@@ -47,6 +48,7 @@ local theme_options = {}
 
 local ui = require('ui')
 
+-- Windower incoming-text message modes used by FFXI for dialogue and system text.
 local MODE = {}
 MODE.MESSAGE = 150
 MODE.SYSTEM = 151
@@ -61,9 +63,11 @@ local ZONE_OUT_PACKET = 0x0B
 local LEAVE_CONVERSATION_PACKET = 0x52
 
 -- 0x31-0x33 and 0x37 all appear the same
+-- FFXI appends these control bytes to messages that wait for user input.
 local PROMPT_CHARS = string.char(0x7F,0x31)
 -- the 0x01 in this is the number of seconds before the prompt continues itself
 -- 0x34-0x36 seem to do the same thing
+-- Control bytes for a prompt that advances automatically; these lines close the balloon.
 local AUTO_PROMPT_CHARS = string.char(0x7F,0x34,0x01)
 
 local balloon = {}
@@ -80,6 +84,11 @@ balloon.frame_count = 0
 balloon.prev_path = nil
 balloon.close_timer = 0
 balloon.timer_running = false
+balloon.movement_thread_enabled = false
+balloon.movement_thread_generation = 0
+balloon.timed = false
+balloon.last_ui_width = nil
+balloon.last_ui_height = nil
 balloon.last_text = ''
 balloon.last_mode = 0
 balloon.movement_thread = nil
@@ -92,10 +101,14 @@ function initialize()
 
 	apply_theme()
 
-	--スレッド開始 (Thread start)
+	-- Start the timer thread.
 	timer:schedule(0)
 	if settings.MovementCloses then
-		balloon.movement_thread = moving_check:schedule(0)
+		-- The movement loop is stopped cooperatively; Windower's Lua runtime does not
+		-- provide coroutine.close.
+		balloon.movement_thread_enabled = true
+		balloon.movement_thread_generation = balloon.movement_thread_generation + 1
+		balloon.movement_thread = moving_check:schedule(0, balloon.movement_thread_generation)
 	end
 
 	balloon.initialized = true
@@ -121,6 +134,7 @@ function open(timed)
 		balloon.close_timer = settings.NoPromptCloseDelay
 		ui.timer_text:text(''..balloon.close_timer)
 	end
+	balloon.timed = timed
 
 	ui:show(timed)
 
@@ -168,13 +182,13 @@ windower.register_event('login',function()
 	initialize:schedule(10)
 end)
 
-function moving_check()
+function moving_check(generation)
 	local p = windower.ffxi.get_player()
 	if p == nil then return end
 
 	local me,x,y
 
-	while true do
+	while balloon.movement_thread_enabled and generation == balloon.movement_thread_generation do
 		me = windower.ffxi.get_mob_by_id(p.id)
 		if me ~= nil then
 			x = string.format("%6d",me.x)
@@ -199,15 +213,16 @@ function moving_check()
 end
 
 windower.register_event('incoming chunk',function(id,original,modified,injected,blocked)
-	if S{'chunk', 'all'}[balloon.debug] then print("Chunk: " .. '0x%02X':format(id) .. " original: " .. original) end
+	if S{'chunk', 'all'}[balloon.debug] then print("Chunk: " .. ('0x%02X'):format(id) .. " original: " .. original) end
 
-	--会話中かの確認 (Check if you have left a conversation)
+	-- Check whether the conversation has ended.
 	if S{LEAVE_CONVERSATION_PACKET, ZONE_OUT_PACKET}[id] then
 		close()
 	end
 end)
 
 windower.register_event('incoming text',function(original,modified,mode,modified_mode,blocked)
+	if blocked then return end
 	-- print debug info
 	if S{'codes', 'mode', 'all'}[balloon.debug] then print("Mode: " .. mode .. " Text: " .. original) end
 
@@ -239,6 +254,9 @@ function process_balloon(npc_text, mode)
 
 	balloon.last_text = npc_text
 	balloon.last_mode = mode
+	-- Returning the original text lets the incoming-text event preserve or suppress
+	-- the normal log entry according to DisplayMode.
+	local result = npc_text
 
 	-- detect whether messages have a prompt button
 	local timed = true
@@ -246,7 +264,7 @@ function process_balloon(npc_text, mode)
 		timed = false
 	end
 
-	-- 発言者名の抽出 (Speaker name extraction)
+	-- Extract the speaker name.
 	local start,_end = npc_text:find(".- : ")
 	local npc_prefix = ""
 	if start ~= nil then
@@ -255,9 +273,9 @@ function process_balloon(npc_text, mode)
 	local npc_name = npc_prefix:sub(0,#npc_prefix-2)
 	npc_name = string.trim(npc_name)
 
-	if not ui:set_character(npc_name) then
-		ui:set_type(mode)
-	end
+	-- Set the message type first; custom character backgrounds only replace the image.
+	ui:set_type(mode)
+	ui:set_character(npc_name)
 
 	-- mode 1, blank log lines and visible balloon
 	if settings.DisplayMode == 1 then
@@ -272,27 +290,31 @@ function process_balloon(npc_text, mode)
 		result = npc_text
 	end
 
-	-- 発言 (Remark)
+	-- Process the remark.
+	-- Substitute FFXI byte sequences before Shift-JIS conversion, then restore the
+	-- display characters afterward. These sequences are not ordinary text yet.
 	local mes = SubCharactersPreShift(npc_text)
 	mes = windower.from_shift_jis(mes)
 	mes = SubCharactersPostShift(mes)
 
 	-- strip the NPC name from the start of the message
 	if npc_prefix ~= "" then
-		mes = mes:gsub(npc_prefix:gsub("-","--"),"") --タルタル等対応 (Correspondence such as tartar)
+		if mes:sub(1, #npc_prefix) == npc_prefix then
+			mes = mes:sub(#npc_prefix + 1) -- Handle names such as Tarutaru NPCs.
+		end
 	end
 
 	if S{'process', 'all'}[balloon.debug] then print("Pre-process: " .. mes) end
 	if S{'codes', 'all'}[balloon.debug] then print("codes: " .. codes(mes)) end
 
-	--strip the default color code from the start of messages,
-	--it causes the first part of the message to get cut off somehow
+	-- Strip the default color code from the start of messages. Leaving it here can
+	-- cause the first visible part of the balloon text to be cut off.
 	local default_color = string.char(0x1E,0x01)
 	if string.sub(mes, 1, #default_color) == default_color then
 		mes = string.sub(mes, #default_color + 1)
 	end
 
-	-- split by newlines
+	-- FFXI uses byte 0x07 for embedded line breaks in incoming dialogue.
 	local mess = split(mes,string.char(0x07))
 
 	local message = ""
@@ -422,11 +444,11 @@ windower.register_event("addon command", function(command, ...)
 	if command == 'help' then
 		local t = {}
 		t[#t+1] = "Balloon(Bl)" .. "Ver." .._addon.version
-		t[#t+1] = "  <コマンド> (<Command>)"
-		t[#t+1] = "     //Balloon 0  	:吹き出し非表示＆ログ表示 (Hiding balloon & displaying log)"
-		t[#t+1] = "     //Balloon 1  	:吹き出し表示＆ログ非表示 (Show balloon & hide log)"
-		t[#t+1] = "     //Balloon 2  	:吹き出し表示＆ログ表示 (Balloon display & log display)"
-		t[#t+1] = "     //Balloon reset :吹き出し位置初期化 (Initialize balloon position)"
+		t[#t+1] = "  <Commands>"
+		t[#t+1] = "     //Balloon 0  	: hide balloon and show log"
+		t[#t+1] = "     //Balloon 1  	: show balloon and hide log"
+		t[#t+1] = "     //Balloon 2  	: show balloon and show log"
+		t[#t+1] = "     //Balloon reset : reset balloon position"
 		t[#t+1] = "     //Balloon theme <theme> - loads the specified theme"
 		t[#t+1] = "     //Balloon scale <scale> - scales the size of the balloon by a decimal (eg: 1.5)"
 		t[#t+1] = "     //Balloon delay <seconds> - delay before closing promptless balloons"
@@ -434,7 +456,7 @@ windower.register_event("addon command", function(command, ...)
 		t[#t+1] = "     //Balloon animate - toggle the advancement prompt indicator bouncing"
 		t[#t+1] = "     //Balloon portrait - toggle the display of character portraits, if the theme has settings for them"
 		t[#t+1] = "     //Balloon move_closes - toggle balloon auto-close on player movement"
-		t[#t+1] = "     //Balloon debug off/all/mode/codes/chunk/process/wrap/chars/elements - enable debug modes"
+		t[#t+1] = "     //Balloon debug off/all/mode/codes/chunk/process/chars - enable debug modes"
 		t[#t+1] = "     //Balloon test <name> : <message> - display a test balloon"
 		t[#t+1] = "　"
 		for tk,tv in pairs(t) do
@@ -443,64 +465,83 @@ windower.register_event("addon command", function(command, ...)
 
 	elseif command == '1' then
 		settings.DisplayMode = 1
-		log("モード (mode) 1　　:吹き出し表示＆ログ非表示 (Show balloon & hide log)")
+		log("Mode 1: show balloon and hide log")
 
 	elseif command == '0' then
 		settings.DisplayMode = 0
-		log("モード (mode) 0　　:吹き出し非表示＆ログ表示 (Hiding balloon & displaying log)")
+		log("Mode 0: hide balloon and show log")
 
 	elseif command == '2' then
 		settings.DisplayMode = 2
-		log("モード (mode) 2　　:吹き出し表示＆ログ表示 (Balloon display & log display)")
+		log("Mode 2: show balloon and show log")
 
 	elseif command == 'reset' then
 		settings.Position.X = defaults.Position.X
 		settings.Position.Y = defaults.Position.Y
 		ui:position(settings.Position.X, settings.Position.Y)
-		log("Balloon位置リセットしました。 (Balloon position reset.)")
+		log("Balloon position reset.")
 
 	elseif command == 'theme' then
 		if not args:empty() then
+			if not args[1]:match('^[%w_-]+$') then
+				log('theme names may contain only letters, numbers, underscores, and hyphens')
+				return
+			end
 			local tp = 'themes/'..args[1]..'/theme.xml'
 			if not windower.file_exists(windower.addon_path..tp) then
-				log("theme.xml not found under %s":format(tp))
+				log(("theme.xml not found under %s"):format(tp))
 				return
 			end
 
 			local old_theme = settings.Theme
 			settings.Theme = args[1]
 			apply_theme()
-			log("changed theme from '%s' to '%s'":format(old_theme, settings.Theme))
+			log(("changed theme from '%s' to '%s'"):format(old_theme, settings.Theme))
 		else
-			log("current theme is '%s' (default: %s)":format(settings.Theme, defaults.Theme))
+			log(("current theme is '%s' (default: %s)"):format(settings.Theme, defaults.Theme))
 		end
 
-	elseif command == 'scale' then
+		elseif command == 'scale' then
 		local old_scale = settings.Scale
 		if not args:empty() then
-			settings.Scale = tonumber(args[1])
+				local scale = tonumber(args[1])
+				if not scale or scale <= 0 then
+					log('scale must be a positive number')
+					return
+				end
+				settings.Scale = scale
 			ui:scale(settings.Scale)
-			log("scale changed from %.2f to %.2f":format(old_scale, settings.Scale))
+			log(("scale changed from %.2f to %.2f"):format(old_scale, settings.Scale))
 		else
-			log("current scale is %.2f (default: %.2f)":format(settings.Scale, defaults.Scale))
+			log(("current scale is %.2f (default: %.2f)"):format(settings.Scale, defaults.Scale))
 		end
 
 	elseif command == 'delay' then
 		local old_delay = settings.NoPromptCloseDelay
 		if not args:empty() then
-			settings.NoPromptCloseDelay = tonumber(args[1])
-			log("promptless close delay changed from %d to %d":format(old_delay, settings.NoPromptCloseDelay))
+				local delay = tonumber(args[1])
+				if not delay or delay < 0 then
+					log('delay must be a non-negative number')
+					return
+				end
+				settings.NoPromptCloseDelay = delay
+			log(("promptless close delay changed from %.2f to %.2f"):format(old_delay, settings.NoPromptCloseDelay))
 		else
-			log("current promptless close delay is %d (default: %d)":format(old_delay, defaults.NoPromptCloseDelay))
+			log(("current promptless close delay is %.2f (default: %.2f)"):format(old_delay, defaults.NoPromptCloseDelay))
 		end
 
 	elseif command == 'text_speed' then
 		local old_speed = settings.TextSpeed
 		if not args:empty() then
-			settings.TextSpeed = tonumber(args[1])
-			log("text speed changed from %d to %d":format(old_speed, settings.TextSpeed))
+				local speed = tonumber(args[1])
+				if not speed or speed < 0 or speed % 1 ~= 0 then
+					log('text speed must be a non-negative integer')
+					return
+				end
+				settings.TextSpeed = speed
+			log(("text speed changed from %d to %d"):format(old_speed, settings.TextSpeed))
 		else
-			log("current text speed is %d (default: %d)":format(settings.TextSpeed, defaults.TextSpeed))
+			log(("current text speed is %d (default: %d)"):format(settings.TextSpeed, defaults.TextSpeed))
 		end
 
 	elseif command == 'animate' then
@@ -516,11 +557,14 @@ windower.register_event("addon command", function(command, ...)
 	elseif command == 'move_closes' then
 		settings.MovementCloses = not settings.MovementCloses
 		if settings.MovementCloses then
-			balloon.movement_thread = moving_check:schedule(0)
+			-- Do not forcibly close the coroutine: let its loop observe this flag.
+			balloon.movement_thread_enabled = true
+			balloon.movement_thread_generation = balloon.movement_thread_generation + 1
+			balloon.movement_thread = moving_check:schedule(0, balloon.movement_thread_generation)
 		else
-			if balloon.movement_thread ~= nil and coroutine.status(balloon.movement_thread) ~= 'dead' then
-				coroutine.close(balloon.movement_thread)
-			end
+			balloon.movement_thread_enabled = false
+			balloon.movement_thread_generation = balloon.movement_thread_generation + 1
+			balloon.movement_thread = nil
 		end
 
 		log("close balloons on player movement - " .. (settings.MovementCloses and "on" or "off"))
@@ -541,7 +585,15 @@ windower.register_event("addon command", function(command, ...)
 	config.save(settings)
 end)
 
-windower.register_event("prerender",function()
+	windower.register_event("prerender",function()
+	local window = windower.get_windower_settings()
+	if balloon.last_ui_width and (window.ui_x_res ~= balloon.last_ui_width or window.ui_y_res ~= balloon.last_ui_height) then
+		settings.Position.X = settings.Position.X * window.ui_x_res / balloon.last_ui_width
+		settings.Position.Y = settings.Position.Y * window.ui_y_res / balloon.last_ui_height
+		ui:position(settings.Position.X, settings.Position.Y)
+	end
+	balloon.last_ui_width = window.ui_x_res
+	balloon.last_ui_height = window.ui_y_res
 	-- animate our text advance indicator bouncing up and down
 	balloon.frame_count = balloon.frame_count + 1
 	if balloon.frame_count > 60*math.pi*2 then balloon.frame_count = balloon.frame_count - 60*math.pi*2 end
@@ -566,7 +618,7 @@ windower.register_event('keyboard',function(key_id,pressed,flags,blocked)
 			if not ui:hidden() then
 				ui:hide()
 			else
-				ui:show()
+				ui:show(balloon.timed)
 			end
 		end
 	end

@@ -258,7 +258,9 @@ function ui:set_character(name)
     self.name_text:text(' '..name)
 
     local info = windower.ffxi.get_info()
-    local zone_name = res.zones[info.zone].en
+    -- Historical-zone portraits use the same NPC name with an " (S)" suffix.
+    local zone = info and info.zone and res.zones[info.zone]
+    local zone_name = zone and zone.en or ''
     local s = false
     if zone_name:endswith('[S]') then
         s = true
@@ -269,6 +271,7 @@ function ui:set_character(name)
         local theme_portrait_s = (windower.addon_path..'themes/'..self._theme..'/portraits/%s (S).png'):format(name)
         local portrait = (windower.addon_path..'portraits/%s.png'):format(name)
         local portrait_s = (windower.addon_path..'portraits/%s (S).png'):format(name)
+        -- Prefer historical portraits, then theme portraits, then the shared pack.
         if s and windower.file_exists(theme_portrait_s) then
             self.portrait:path(theme_portrait_s)
             self._has_portrait = true
@@ -311,7 +314,25 @@ local function Tokenize(str)
 	return result
 end
 
+local function utf8_chars(str)
+    local chars = {}
+    for char in str:gmatch('[%z\1-\127\194-\244][\128-\191]*') do
+        chars[#chars + 1] = char
+    end
+    return chars
+end
+
+local function character_count(str)
+    local count = 0
+    for _ in str:gmatch('[%z\1-\127\194-\244][\128-\191]*') do
+        count = count + 1
+    end
+    return count
+end
+
 function ui:wrap_text(str)
+	-- Text has already been converted to UTF-8 here, so count code points rather
+	-- than bytes while preserving the embedded Windower color markers.
 	local line_length = self._theme_options.message.max_length+1
     if self._has_portrait and self._theme_options.portrait.max_length then
         line_length = self._theme_options.portrait.max_length+1
@@ -320,14 +341,23 @@ function ui:wrap_text(str)
 	local result = {}
 	local line = {}
 
-	for _, word in ipairs(Tokenize(str)) do
-		if #word+1 > length_left then
-			table.insert(result, table.concat(line, ' '))
-			line = {word}
-			length_left = line_length - #word
-		else
-			table.insert(line, word)
-			length_left = length_left - (#word + 1)
+    for _, word in ipairs(Tokenize(str)) do
+        local words = {word}
+        if character_count(word) > line_length then
+            words = utf8_chars(word)
+        end
+        for _, part in ipairs(words) do
+            local part_length = character_count(part)
+            if part_length+1 > length_left then
+			if #line > 0 then
+				table.insert(result, table.concat(line, ' '))
+			end
+			line = {part}
+			length_left = line_length - part_length
+			else
+				table.insert(line, part)
+				length_left = length_left - (part_length + 1)
+			end
 		end
 	end
 

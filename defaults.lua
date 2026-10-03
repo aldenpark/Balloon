@@ -1,5 +1,6 @@
 local defaults = {}
 
+-- 0: log only, 1: balloon only, 2: both log and balloon.
 defaults.DisplayMode = 2
 defaults.MovementCloses = false
 defaults.NoPromptCloseDelay = 10
