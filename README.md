@@ -2,6 +2,13 @@
 
 Balloon displays NPC dialogue in a customizable speech balloon.
 
+## Default theme in FFXI
+
+The default theme displays NPC dialogue with the speaker's name, optional
+portrait, wrapped dialogue text, and the prompt countdown:
+
+![Balloon default theme in FFXI](docs/Example-default.png)
+
 ## Installation
 
 1. Download or clone this repository.
