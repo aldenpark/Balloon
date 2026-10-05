@@ -3,3 +3,4 @@ data/
 *.bmp
 *.kra
 *.png~
+debug-input.log

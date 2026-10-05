@@ -68,7 +68,7 @@ Use `//balloon` or `//bl`.
 //bl system            Toggle system-message balloons.
 //bl move_closes       Toggle closing balloons when the player moves.
 //bl debug <mode>      Enable debug output (off, all, mode, codes, chunk,
-                      process, or chars).
+                      process, chars, or input).
 //bl test <name> : <message>
                       Display a test balloon.
 //bl help              Show help.
@@ -81,9 +81,17 @@ it commonly contains fishing and item-acquisition messages.
 ## Usage notes
 
 The balloon can be repositioned with the mouse while it is visible. Mode 0
-only disables future balloons; it does not close one already on screen. When the
-log is hidden, the game may still advance it by one blank line while waiting
-for a button press. Themes select the appropriate English or Japanese font.
+only disables future balloons; it does not close one already on screen. Themes
+select the appropriate English or Japanese font.
+
+In mode 1, Grounds Tome and Field Manual page details appear together in the
+balloon. Balloon advances the intermediate lines automatically and waits for
+Enter at the final "Training area" line so you can read the complete page. The
+normal FFXI log stays hidden. Field Manual text after the page is shown
+separately.
+
+For dialog troubleshooting, `//bl debug input` writes incoming text returns and
+Enter events to `Balloon/debug-input.log`. Run `//bl debug off` when finished.
 
 Themes are stored under themes/. Portraits are stored under portraits/.
 Character-specific balloon backgrounds go under themes/<name>/characters/.

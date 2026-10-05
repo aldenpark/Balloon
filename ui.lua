@@ -378,6 +378,14 @@ function ui:set_message(message)
     self:position()
 end
 
+function ui:append_message(message)
+    -- Page lines arrive separately; show each addition immediately before the
+    -- next prompt advances, while keeping the earlier lines visible.
+    self._current_text = self._current_text .. message
+    self._chars_shown = #self._current_text
+    self.message_text:text(self._current_text)
+end
+
 local function smooth_sawtooth(time, frequency)
 	local x = time * frequency
 	return(-math.sin(x-math.sin(x)/2))

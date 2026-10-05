@@ -30,7 +30,7 @@
 --
 _addon.author = 'Originally by Hando, English support added by Yuki & Kenshi, themes added by Ghosty'
 _addon.name = 'Balloon'
-_addon.version = '0.15'
+_addon.version = '0.16'
 _addon.commands = {'balloon','bl'}
 
 require('luau')
@@ -42,6 +42,23 @@ images = require('images')
 
 local defaults = require('defaults')
 local settings = {}
+local debug_log = nil
+
+local function close_debug_log()
+	if debug_log then
+		debug_log:close()
+		debug_log = nil
+	end
+end
+
+local function open_debug_log()
+	close_debug_log()
+	debug_log = io.open(windower.addon_path .. 'debug-input.log', 'w')
+	if debug_log then
+		debug_log:write(('Balloon input trace started %s\n'):format(os.date('%Y-%m-%d %H:%M:%S')))
+		debug_log:flush()
+	end
+end
 
 local theme = require('theme')
 local theme_options = {}
@@ -94,6 +111,8 @@ balloon.last_ui_height = nil
 balloon.last_text = ''
 balloon.last_mode = 0
 balloon.movement_thread = nil
+-- Mode 1 book pages arrive as separate mode-151 messages.
+balloon.manual_page_active = false
 
 -------------------------------------------------------------------------------
 
@@ -102,6 +121,7 @@ function initialize()
 	config.save(settings)
 
 	apply_theme()
+	if balloon.debug == 'input' then open_debug_log() end
 
 	-- Start the timer thread.
 	timer:schedule(0)
@@ -149,6 +169,7 @@ function close()
 
 	balloon.on = false
 	balloon.waiting_to_close = false
+	balloon.manual_page_active = false
 end
 
 function timer()
@@ -236,6 +257,17 @@ windower.register_event('incoming text',function(original,modified,mode,modified
 	end
 	if not accepted_modes[mode] then return end
 	if mode == MODE.SYSTEM and not settings.SystemMessages then return end
+	-- Grounds Tomes and Field Manuals share this page header and end marker.
+	-- Track only their mode-1 page details; other dialog keeps normal prompts.
+	local manual_page_start = mode == MODE.SYSTEM and settings.DisplayMode == 1
+		and original:find("The information on this page instructs you", 1, true)
+	if mode ~= MODE.SYSTEM or settings.DisplayMode ~= 1 then
+		balloon.manual_page_active = false
+	elseif manual_page_start then
+		balloon.manual_page_active = true
+	end
+	local append_manual_line = balloon.manual_page_active and not manual_page_start
+	local manual_page_end = balloon.manual_page_active and original:find("Training area:", 1, true)
 
 	-- blank prompt line that auto-continues itself,
 	-- usually used to clear a space for a scene change?
@@ -249,13 +281,28 @@ windower.register_event('incoming text',function(original,modified,mode,modified
 
 	local result = original
 	if settings.DisplayMode >= 1 then
-		result = process_balloon(original, mode)
+		result = process_balloon(original, mode, append_manual_line)
     end
+	if balloon.manual_page_active then
+		-- A newline advances each intermediate page prompt after its text reaches
+		-- the balloon. Keep the Training area prompt so Enter dismisses the page.
+		if not manual_page_end then result = "\n" end
+		if manual_page_end then balloon.manual_page_active = false end
+	end
+	-- Do not block mode-151 messages to hide them in DisplayMode 1. An earlier
+	-- attempt to return true here hid Grounds Tome dialog text but left the game
+	-- dialog unusable. The final prompted page line retains its prompt bytes.
+	if balloon.debug == 'input' then
+		if debug_log then
+			debug_log:write(('Balloon text mode=%d display=%d original=%q return=%q\n'):format(mode, settings.DisplayMode, original, result))
+			debug_log:flush()
+		end
+	end
     return(result)
 
 end)
 
-function process_balloon(npc_text, mode)
+function process_balloon(npc_text, mode, append_message)
 	if not balloon.initialized then
 		initialize()
 	end
@@ -288,7 +335,13 @@ function process_balloon(npc_text, mode)
 	-- mode 1, blank log lines and visible balloon
 	if settings.DisplayMode == 1 then
 		if npc_prefix == "" then
-			result = "" .. "\n"
+			-- Keep the game's wait-for-input marker while hiding the page text.
+			-- Replacing this marker with a newline appears to advance manual pages.
+			if mode == MODE.SYSTEM and npc_text:sub(-#PROMPT_CHARS) == PROMPT_CHARS then
+				result = PROMPT_CHARS
+			else
+				result = "\n"
+			end
 		else
 			result = npc_text:sub(#npc_text-1,#npc_text)
 		end
@@ -376,7 +429,11 @@ function process_balloon(npc_text, mode)
 	end
 	if S{'process', 'all'}[balloon.debug] then print("Final: " .. message) end
 
-	ui:set_message(message)
+	if append_message then
+		ui:append_message(message)
+	else
+		ui:set_message(message)
+	end
 	open(timed)
 
 	return(result)
@@ -465,7 +522,7 @@ windower.register_event("addon command", function(command, ...)
 		t[#t+1] = "     //Balloon animate - toggle the advancement prompt indicator bouncing"
 		t[#t+1] = "     //Balloon portrait - toggle the display of character portraits, if the theme has settings for them"
 		t[#t+1] = "     //Balloon move_closes - toggle balloon auto-close on player movement"
-		t[#t+1] = "     //Balloon debug off/all/mode/codes/chunk/process/chars - enable debug modes"
+		t[#t+1] = "     //Balloon debug off/all/mode/codes/chunk/process/chars/input - log input trace to debug-input.log"
 		t[#t+1] = "     //Balloon test <name> : <message> - display a test balloon"
 		t[#t+1] = "　"
 		for tk,tv in pairs(t) do
@@ -474,14 +531,17 @@ windower.register_event("addon command", function(command, ...)
 
 	elseif command == '1' then
 		settings.DisplayMode = 1
+		balloon.manual_page_active = false
 		log("Mode 1: show balloon and hide log")
 
 	elseif command == '0' then
 		settings.DisplayMode = 0
+		balloon.manual_page_active = false
 		log("Mode 0: hide balloon and show log")
 
 	elseif command == '2' then
 		settings.DisplayMode = 2
+		balloon.manual_page_active = false
 		log("Mode 2: show balloon and show log")
 
 	elseif command == 'reset' then
@@ -595,6 +655,11 @@ windower.register_event("addon command", function(command, ...)
 		else
 			balloon.debug = (balloon.debug == 'off' and 'all' or 'off')
 		end
+		if balloon.debug == 'input' then
+			open_debug_log()
+		else
+			close_debug_log()
+		end
 		log("set debug mode " .. balloon.debug)
 
 	elseif command == 'test' then
@@ -604,6 +669,8 @@ windower.register_event("addon command", function(command, ...)
 
 	config.save(settings)
 end)
+
+windower.register_event('unload', close_debug_log)
 
 	windower.register_event("prerender",function()
 	local window = windower.get_windower_settings()
@@ -627,6 +694,12 @@ end)
 end)
 
 windower.register_event('keyboard',function(key_id,pressed,flags,blocked)
+	if balloon.debug == 'input' and S{ENTER_KEY, NUMPAD_ENTER_KEY}[key_id] then
+		if debug_log then
+			debug_log:write(('Balloon keyboard key=%d pressed=%s blocked=%s balloon_on=%s\n'):format(key_id, tostring(pressed), tostring(blocked), tostring(balloon.on)))
+			debug_log:flush()
+		end
+	end
 	if windower.ffxi.get_info().chat_open or blocked then return end
 		if balloon.on == true then
 			if S{ENTER_KEY, NUMPAD_ENTER_KEY}[key_id] and pressed and not balloon.keydown then
